@@ -1,0 +1,22 @@
+# apphosting.yaml
+
+# Cloud Run service resource settings
+runConfig:
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+
+# Environment variables passed to Next.js
+env:
+  - variable: NEXT_PUBLIC_SUPABASE_URL
+    value: "https://placeholder-project.supabase.co"
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_SUPABASE_ANON_KEY
+    value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.placeholder"
+    availability:
+      - BUILD
+      - RUNTIME
