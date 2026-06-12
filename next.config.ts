@@ -1,7 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: 'export',
   turbopack: {
     // set root to this project to avoid workspace root inference warnings
     root: './'
