@@ -15,6 +15,7 @@ export interface MockSubscription extends Subscription {
   quantity: number
   days_selected: string[]
   paused: boolean
+  amount_paise?: number
 }
 
 const isBundleQuantity = (quantity: number) => {

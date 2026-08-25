@@ -32,7 +32,7 @@ export async function GET() {
         subscription_weekdays (weekday)
       `)
       .eq('user_id', user.id)
-      .in('status', ['active', 'paused'])
+      .in('status', ['pending_payment', 'active', 'paused'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -57,6 +57,10 @@ export async function GET() {
       .map(({ weekday }: { weekday: number }) => weekdayNames[weekday])
       .filter(Boolean)
 
+    const { data: amountDue } = await supabase.rpc('subscription_delivery_amount', {
+      p_subscription_id: data.id,
+    })
+
     return NextResponse.json({
       subscription: {
         id: data.id,
@@ -67,6 +71,7 @@ export async function GET() {
         status: data.status,
         paused: data.status === 'paused',
         bundles,
+        amount_paise: Number(amountDue || 0),
       },
     })
   } catch (error) {

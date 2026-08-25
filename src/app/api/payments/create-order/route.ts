@@ -24,8 +24,9 @@ export async function POST(request: NextRequest) {
     if (parsed.data.purpose === 'wallet_topup') amountPaise = parsed.data.amount_paise
     else {
       subscriptionId = parsed.data.subscription_id
-      const { data: subscription, error } = await supabase.from('subscriptions').select('id,subscription_items(units,products(id,product_prices(amount_paise,valid_until)))').eq('id', subscriptionId).eq('user_id', user.id).single()
+      const { data: subscription, error } = await supabase.from('subscriptions').select('id,status,subscription_items(units,products(id,product_prices(amount_paise,valid_until)))').eq('id', subscriptionId).eq('user_id', user.id).single()
       if (error || !subscription) return NextResponse.json({ error: 'Subscription not found.' }, { status: 404 })
+      if (subscription.status !== 'pending_payment') return NextResponse.json({ error: 'This subscription is not awaiting payment.' }, { status: 409 })
       const items = (subscription.subscription_items || []) as unknown as Array<{ units: number; products: { product_prices: Array<{ amount_paise: number; valid_until: string | null }> } }>
       amountPaise = items.reduce((sum, item) => sum + item.units * (item.products.product_prices.find(price => price.valid_until === null)?.amount_paise || 0), 0)
       if (!amountPaise) return NextResponse.json({ error: 'No active price exists for this subscription.' }, { status: 409 })

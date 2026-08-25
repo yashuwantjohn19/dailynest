@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
         quantity: calculatedQuantity,
         days_selected: selectedDays,
         start_date: startDate || new Date().toISOString().split('T')[0],
-        status: 'active',
+        status: 'pending_payment',
       },
     })
   } catch (error) {

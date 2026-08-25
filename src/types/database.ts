@@ -58,7 +58,7 @@ export interface Subscription {
   quantity?: number
   start_date: string
   end_date?: string | null
-  status: 'active' | 'paused' | 'cancelled'
+  status: 'pending_payment' | 'active' | 'paused' | 'cancelled'
   created_at: string
   updated_at: string
 }
