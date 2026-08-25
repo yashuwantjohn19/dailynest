@@ -21,6 +21,20 @@ export async function POST(request: NextRequest) {
     const { error: captureError } = await admin.rpc('capture_payment_order', { p_order_id: order.id, p_payment_id: payment.id })
     if (captureError) return NextResponse.json({ error: 'Payment capture recording failed.' }, { status: 500 })
   }
+
+  if (payload.event === 'payment.failed') {
+    const payment = payload.payload?.payment?.entity
+    if (!payment?.order_id || !payment.id) return NextResponse.json({ error: 'Malformed failed payment.' }, { status: 400 })
+    const { data: order } = await admin.from('payment_orders').select('id,amount_paise,status').eq('razorpay_order_id', payment.order_id).maybeSingle()
+    if (order && payment.amount === order.amount_paise && order.status !== 'captured') {
+      const { error: failureError } = await admin
+        .from('payment_orders')
+        .update({ status: 'failed', razorpay_payment_id: payment.id })
+        .eq('id', order.id)
+        .in('status', ['created', 'verified'])
+      if (failureError) return NextResponse.json({ error: 'Payment failure recording failed.' }, { status: 500 })
+    }
+  }
   await admin.from('payment_webhook_events').update({ processed_at: new Date().toISOString() }).eq('event_id', eventId)
   return NextResponse.json({ received: true })
 }
