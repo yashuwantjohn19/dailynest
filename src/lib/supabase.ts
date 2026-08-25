@@ -1,7 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
+// Temporary compatibility exports for existing Client Components.
+import { createClient } from './supabase/client'
+import { isSupabaseConfigured } from './supabase/config'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-
-export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder')
-export const isMockMode = !supabaseUrl || supabaseUrl.includes('placeholder-project')
+export { isSupabaseConfigured } from './supabase/config'
+export const supabase = createClient()
+export const isMockMode = !isSupabaseConfigured

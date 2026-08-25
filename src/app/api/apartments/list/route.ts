@@ -1,24 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabase, isMockMode } from '../../../../lib/supabase'
-import { DEFAULT_APARTMENTS } from '../../../../utils/mockDb'
+import { NextResponse } from 'next/server'
+import { requireUser } from '../../../../lib/auth'
+import { apiErrorResponse } from '../../../../lib/api/errors'
+import { isSupabaseConfigured } from '../../../../lib/supabase/config'
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    if (isMockMode) {
-      return NextResponse.json({ apartments: DEFAULT_APARTMENTS })
-    }
+    if (!isSupabaseConfigured) return NextResponse.json({ error: 'Supabase is not configured' }, { status: 503 })
+    const { supabase } = await requireUser()
 
     const { data, error } = await supabase
       .from('apartments')
       .select('*')
 
-    if (error) {
-      // Graceful fallback to mock data on supabase error in local dev
-      return NextResponse.json({ apartments: DEFAULT_APARTMENTS })
-    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
     return NextResponse.json({ apartments: data })
   } catch (error) {
-    return NextResponse.json({ apartments: DEFAULT_APARTMENTS })
+    return apiErrorResponse(error)
   }
 }

@@ -1,266 +1,100 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, CheckCircle2, Loader2, Phone, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Loader2, Mail, ShieldCheck } from 'lucide-react'
+import { isSupabaseConfigured, supabase } from '../../lib/supabase'
 
 export default function LoginPage() {
-  const router = useRouter()
-  const [phone, setPhone] = useState('')
-  const [otp, setOtp] = useState('')
-  const [step, setStep] = useState<'phone' | 'otp'>('phone')
-  
+  const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [infoMessage, setInfoMessage] = useState<string | null>(null)
 
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!phone) return
-
-    setLoading(true)
     setError(null)
     setInfoMessage(null)
 
-    try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to send OTP')
-      }
-
-      setInfoMessage('OTP sent successfully!')
-      setStep('otp')
-    } catch (err: any) {
-      console.warn('Real OTP send failed, falling back to mock mode:', err)
-      setInfoMessage('Development Mode: Using mock OTP. (Any 6-digit code will work, e.g. 123456)')
-      setStep('otp')
-    } finally {
-      setLoading(false)
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError('Enter a valid email address, for example name@example.com.')
+      return
     }
-  }
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!otp) return
+    if (!isSupabaseConfigured) {
+      setError('Sign-in is temporarily unavailable because the authentication service is not configured.')
+      return
+    }
 
     setLoading(true)
-    setError(null)
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: normalizedEmail,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(new URLSearchParams(window.location.search).get('next') || '/dashboard')}`,
+      },
+    })
+    setLoading(false)
 
-    try {
-      const res = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, otp }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Invalid OTP')
-      }
-
-      // Successful real auth
-      localStorage.setItem('dailynest_mock_user', JSON.stringify({
-        id: data.user.id,
-        phone: data.user.phone,
-        name: data.user.user_metadata?.name || 'DailyNest User',
-        email: data.user.email || '',
-        avatar_url: data.user.user_metadata?.avatar_url || ''
-      }))
-      
-      window.dispatchEvent(new Event('dailynest_auth_change'))
-      router.push('/dashboard')
-    } catch (err: any) {
-      console.warn('Real OTP verification failed, logging in with mock user profile:', err)
-      
-      // Save a mock user in localStorage
-      const mockUser = {
-        id: 'user-mock-123',
-        phone: phone,
-        name: 'Yashuwant Vijay',
-        email: 'yashuwant@dailynest.com',
-        avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'
-      }
-      localStorage.setItem('dailynest_mock_user', JSON.stringify(mockUser))
-      window.dispatchEvent(new Event('dailynest_auth_change'))
-      
-      // Ensure default wallet balance and transactions exist
-      if (!localStorage.getItem('dailynest_mock_wallet_balance')) {
-        localStorage.setItem('dailynest_mock_wallet_balance', '1250')
-      }
-      
-      setInfoMessage('Logged in successfully (Mock Mode)! Redirecting...')
-      setTimeout(() => {
-        router.push('/dashboard')
-      }, 1000)
-    } finally {
-      setLoading(false)
+    if (otpError) {
+      setError(otpError.message)
+      return
     }
+
+    setEmail(normalizedEmail)
+    setInfoMessage('Sign-in link sent. Check your inbox and spam folder, then click the link to continue.')
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-tr from-indigo-50 via-white to-green-50 px-4 py-12 sm:px-6 lg:px-8 font-sans">
-      <div className="max-w-md w-full space-y-8 bg-white/80 backdrop-blur-md p-8 rounded-2xl shadow-xl border border-gray-100">
-        
-        {/* Header and Back Button */}
+    <main className="kitchen-canvas min-h-screen px-5 py-8 sm:px-8">
+      <div className="mx-auto grid max-w-6xl overflow-hidden rounded-[2rem] border border-[#dfd0bd] bg-[#fffdf8] shadow-[0_25px_80px_rgba(50,28,49,.12)] md:min-h-[720px] lg:min-h-[calc(100vh-4rem)] lg:grid-cols-[1.05fr_.95fr]">
+        <section className="hidden flex-col justify-between bg-[#321c31] p-12 text-white lg:flex">
+          <Link href="/" className="text-2xl font-black tracking-[-.05em]">Daily<span className="text-[#f18a55]">Nest</span></Link>
+          <div><p className="eyebrow text-[#f5c974]">Your kitchen companion</p><h1 className="editorial-title mt-5 text-6xl font-black">Dinner plans, kept beautifully simple.</h1><p className="mt-6 max-w-md leading-7 text-white/65">Choose your chapati count, schedule delivery days, and follow every wallet transaction in one calm place.</p></div>
+          <div className="flex gap-3 text-sm text-white/65"><ShieldCheck className="h-5 w-5 text-[#8db69a]"/>Secure email verification powered by Supabase</div>
+        </section>
+        <section className="flex items-center p-6 sm:p-10 lg:p-14"><div className="w-full space-y-8">
+        <Link href="/" className="mb-2 hidden rounded-2xl bg-[#321c31] px-5 py-4 text-xl font-black tracking-[-.05em] text-white md:block lg:hidden">Daily<span className="text-[#f18a55]">Nest</span><span className="ml-3 text-xs font-semibold tracking-normal text-white/60">Fresh deliveries for apartment homes</span></Link>
         <div>
           <div className="flex items-center justify-between">
-            <Link href="/" className="inline-flex items-center text-sm font-medium text-gray-500 hover:text-indigo-600 transition-colors">
+            <Link href="/" className="inline-flex items-center text-sm font-bold text-[#6f625f] hover:text-[#321c31]">
               <ArrowLeft className="h-4 w-4 mr-1" /> Back Home
             </Link>
-            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
-              Chennai Deliveries
-            </span>
+            <span className="eyebrow text-[#bb4824]">Password-free sign in</span>
           </div>
-          
-          <div className="mt-6 text-center">
-            <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-              Welcome to <span className="bg-gradient-to-r from-indigo-600 to-green-600 bg-clip-text text-transparent">DailyNest</span>
-            </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              Sign in to manage your daily chapati subscription
-            </p>
+
+          <div className="mt-10">
+            <p className="eyebrow text-[#397354]">Fresh local deliveries</p>
+            <h2 className="editorial-title mt-3 text-4xl font-black text-[#321c31]">Welcome home.</h2>
+            <p className="mt-3 text-sm leading-6 text-[#6f625f]">Enter your email and we will send you a secure sign-in link.</p>
           </div>
         </div>
 
-        {/* Status Messages */}
-        {error && (
-          <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded-md">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div className="ml-3">
-                <p className="text-sm text-red-700">{error}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
+        {error && <div id="auth-error" role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
         {infoMessage && (
-          <div className="bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-md">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <CheckCircle2 className="h-5 w-5 text-indigo-500" />
-              </div>
-              <div className="ml-3">
-                <p className="text-sm text-indigo-800 font-medium">{infoMessage}</p>
-              </div>
-            </div>
+          <div role="status" className="flex gap-3 rounded-xl border border-[#bcd0c1] bg-[#edf5ef] p-4">
+            <CheckCircle2 className="h-5 w-5 text-[#397354] flex-shrink-0" />
+            <p className="text-sm text-[#28543d] font-medium">{infoMessage}</p>
           </div>
         )}
 
-        {/* Login Forms */}
-        {step === 'phone' ? (
-          <form className="mt-8 space-y-6" onSubmit={handleSendOtp}>
-            <div className="rounded-md space-y-2">
-              <label htmlFor="phone-number" className="block text-sm font-medium text-gray-700">
-                Phone Number
-              </label>
+        <form className="mt-8 space-y-6" onSubmit={handleSendOtp}>
+            <div className="space-y-2">
+              <label htmlFor="email-address" className="block text-sm font-bold text-[#321c31]">Email address</label>
               <div className="relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Phone className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="phone-number"
-                  name="phone"
-                  type="tel"
-                  required
-                  placeholder="+91 98765 43210"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 placeholder-gray-400 sm:text-sm transition-shadow"
-                />
+                <Mail className="absolute left-4 top-4 h-5 w-5 text-[#9b8177]" />
+                <input id="email-address" type="email" autoComplete="email" required aria-invalid={Boolean(error)} aria-describedby={error ? 'email-help auth-error' : 'email-help'} aria-errormessage={error ? 'auth-error' : undefined} placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="block w-full rounded-xl border border-[#cdbca6] bg-white py-3.5 pl-12 pr-4 text-[#321c31]" />
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Enter your mobile number with country code (e.g. +91)
-              </p>
+              <p id="email-help" className="text-xs text-gray-500">No password is needed. The link expires after a short time.</p>
             </div>
+            <button type="submit" disabled={loading} className="flex w-full justify-center rounded-xl bg-[#e56b35] px-4 py-3.5 font-bold text-white hover:bg-[#bb4824] disabled:opacity-50">
+              {loading ? <Loader2 aria-label="Sending sign-in link" className="animate-spin h-5 w-5" /> : 'Email me a sign-in link'}
+            </button>
+        </form>
 
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors disabled:opacity-50"
-              >
-                {loading ? (
-                  <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                ) : (
-                  'Send OTP Verification'
-                )}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <form className="mt-8 space-y-6" onSubmit={handleVerifyOtp}>
-            <div className="rounded-md space-y-2">
-              <label htmlFor="otp-code" className="block text-sm font-medium text-gray-700">
-                One-Time Password (OTP)
-              </label>
-              <div className="relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <ShieldCheck className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  id="otp-code"
-                  name="otp"
-                  type="text"
-                  pattern="[0-9]*"
-                  inputMode="numeric"
-                  maxLength={6}
-                  required
-                  placeholder="Enter 6-digit code"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 tracking-[0.25em] font-semibold text-center placeholder-gray-400 sm:text-sm transition-shadow"
-                />
-              </div>
-              <div className="flex justify-between items-center text-xs mt-2">
-                <span className="text-gray-500">Sent to {phone}</span>
-                <button
-                  type="button"
-                  onClick={() => setStep('phone')}
-                  className="font-medium text-indigo-600 hover:text-indigo-500 transition-colors"
-                >
-                  Change phone number
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors disabled:opacity-50"
-              >
-                {loading ? (
-                  <Loader2 className="animate-spin h-5 w-5 mr-2" />
-                ) : (
-                  'Verify OTP & Sign In'
-                )}
-              </button>
-            </div>
-          </form>
-        )}
-        
-        {/* Footer information */}
-        <div className="text-center text-xs text-gray-500 mt-6 flex justify-center items-center gap-1">
-          <svg className="h-4 w-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          Secure connection. Standard carrier rates may apply.
-        </div>
-      </div>
-    </div>
+        <div className="border-t border-[#eadfce] pt-5 text-center text-xs leading-5 text-[#6f625f]">We only use your email for account access and essential service messages. Authentication is handled by Supabase.</div>
+      </div></section></div>
+    </main>
   )
 }

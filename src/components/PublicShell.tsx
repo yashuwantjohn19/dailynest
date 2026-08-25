@@ -1,0 +1,9 @@
+'use client'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { Menu, X } from 'lucide-react'
+import { useState } from 'react'
+const links = [{ href: '/', label: 'Home' }, { href: '/pricing', label: 'Plans' }, { href: '/contact', label: 'Contact' }]
+export function PublicHeader() { const [open,setOpen]=useState(false); const pathname=usePathname(); return <header className="public-header"><nav className="public-nav" aria-label="Main navigation"><Link href="/" className="brand">Daily<span>Nest</span><small>NEIGHBOURHOOD KITCHEN</small></Link><div className="public-links">{links.map(l=><Link aria-current={pathname===l.href?'page':undefined} key={l.href} href={l.href}>{l.label}</Link>)}<Link href="/login" className="button button-dark">Log in</Link></div><button className="nav-toggle" aria-label="Toggle navigation" aria-expanded={open} onClick={()=>setOpen(!open)}>{open?<X/>:<Menu/>}</button></nav>{open&&<nav className="mobile-links" aria-label="Mobile navigation">{links.map(l=><Link key={l.href} href={l.href} onClick={()=>setOpen(false)}>{l.label}</Link>)}<Link href="/login?next=/subscription" className="button button-coral">Choose a plan</Link></nav>}</header> }
+export function PublicFooter(){return <footer className="public-footer"><div><Link href="/" className="brand brand-light">Daily<span>Nest</span></Link><p>Warm chapatis for your table, on the days you choose.</p></div><nav aria-label="Footer navigation"><Link href="/pricing">Pricing</Link><Link href="/contact">Help</Link><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link></nav><p className="footer-note">© 2026 DailyNest · Preview service experience</p></footer>}
+export default function PublicShell({children}:{children:React.ReactNode}){return <div className="kitchen-canvas min-h-screen"><PublicHeader/><main>{children}</main><PublicFooter/></div>}

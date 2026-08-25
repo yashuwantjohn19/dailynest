@@ -1,563 +1,87 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Script from 'next/script'
+import { ArrowDownLeft, ArrowUpRight, CreditCard, Loader2, ShieldCheck, WalletCards } from 'lucide-react'
 import Navigation from '../../components/Navigation'
 import { useUser } from '../../hooks/useUser'
-import { getMockWallet, updateMockWallet } from '../../utils/mockDb'
-import { WalletTransaction } from '../../types/database'
-import { 
-  ArrowDownLeft, 
-  ArrowUpRight, 
-  CheckCircle, 
-  CreditCard, 
-  Loader2, 
-  Plus, 
-  ShieldCheck, 
-  Smartphone, 
-  TrendingUp, 
-  Wallet,
-  Lock,
-  QrCode,
-  AlertCircle,
-  Building2,
-  Check
-} from 'lucide-react'
+import { supabase } from '../../lib/supabase'
+
+type Wallet = { balance_paise: number; held_paise: number }
+type Transaction = { id: string; direction: 'credit' | 'debit'; amount_paise: number; balance_after_paise: number; description: string; created_at: string }
+type Refund = { id: string; amount_paise: number; reason: string; status: string }
+const money = (paise: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(paise / 100)
+
+type RazorpayResponse = { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }
+type RazorpayOptions = { key: string; amount: number; currency: string; name: string; description: string; order_id: string; handler: (response: RazorpayResponse) => void; prefill?: { name?: string; email?: string; contact?: string }; theme?: { color: string }; modal?: { ondismiss: () => void } }
+declare global { interface Window { Razorpay?: new (options: RazorpayOptions) => { open: () => void; on: (event: string, callback: (response: { error?: { description?: string } }) => void) => void } } }
 
 export default function WalletPage() {
   const { user, loading } = useUser()
   const router = useRouter()
+  const [wallet, setWallet] = useState<Wallet | null>(null)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [refunds, setRefunds] = useState<Refund[]>([])
+  const [busy, setBusy] = useState(true)
+  const [topupRupees, setTopupRupees] = useState('500')
+  const [paying, setPaying] = useState(false)
+  const [paymentMessage, setPaymentMessage] = useState('')
+  const [error, setError] = useState('')
 
-  const [balance, setBalance] = useState(0)
-  const [transactions, setTransactions] = useState<WalletTransaction[]>([])
-  
-  // Recharge Form State
-  const [amount, setAmount] = useState('500')
-  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'card' | 'netbanking'>('upi')
-  
-  const [submitting, setSubmitting] = useState(false)
-  const [successMsg, setSuccessMsg] = useState<string | null>(null)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  // Payment Authenticator Modal State
-  const [showAuthModal, setShowAuthModal] = useState(false)
-  const [authState, setAuthState] = useState<'qr' | 'otp' | 'netbank' | 'success'>('qr')
-  const [otpVal, setOtpVal] = useState('')
-  const [authError, setAuthError] = useState<string | null>(null)
-  
-  const [selectedBankName, setSelectedBankName] = useState('State Bank of India')
-  const [bankUsername, setBankUsername] = useState('')
-  const [bankPassword, setBankPassword] = useState('')
-
-  // Redirect if not logged in
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login')
-    }
-  }, [user, loading, router])
-
+  useEffect(() => { if (!loading && !user) router.replace('/login?next=/wallet') }, [loading, user, router])
   useEffect(() => {
     if (!user) return
-    const { balance: bal, transactions: txs } = getMockWallet()
-    setBalance(bal)
-    setTransactions(txs)
+    Promise.all([
+      supabase.from('wallets').select('balance_paise,held_paise').eq('user_id', user.id).maybeSingle(),
+      supabase.from('wallet_transactions').select('id,direction,amount_paise,balance_after_paise,description,created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(50),
+      supabase.from('refund_requests').select('id,amount_paise,reason,status').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20),
+    ]).then(([w, t, r]) => {
+      const queryError = w.error || t.error || r.error
+      if (queryError) setError(queryError.message)
+      else { setWallet(w.data ?? { balance_paise: 0, held_paise: 0 }); setTransactions(t.data ?? []); setRefunds(r.data ?? []) }
+    }).finally(() => setBusy(false))
   }, [user])
 
-  const handleQuickRecharge = (value: number) => {
-    setAmount(String(value))
+  if (loading || !user) return <div className="app-surface flex items-center justify-center"><Loader2 className="animate-spin text-[#e56b35]" /></div>
+  const available = (wallet?.balance_paise ?? 0) - (wallet?.held_paise ?? 0)
+
+  const startTopup = async () => {
+    setError(''); setPaymentMessage('')
+    const amountPaise = Math.round(Number(topupRupees) * 100)
+    if (!Number.isInteger(amountPaise) || amountPaise < 10000 || amountPaise > 10000000) { setError('Enter a top-up amount between ₹100 and ₹1,00,000.'); return }
+    if (!window.Razorpay) { setError('Secure checkout is still loading. Please try again.'); return }
+    setPaying(true)
+    try {
+      const orderResponse = await fetch('/api/payments/create-order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose: 'wallet_topup', amount_paise: amountPaise }) })
+      const order = await orderResponse.json() as { order_id?: string; amount_paise?: number; currency?: string; key_id?: string; error?: string }
+      if (!orderResponse.ok || !order.order_id || !order.key_id || !order.amount_paise) throw new Error(order.error || 'Unable to create a payment order.')
+      const checkout = new window.Razorpay({
+        key: order.key_id, amount: order.amount_paise, currency: order.currency || 'INR', name: 'DailyNest', description: 'Wallet top-up', order_id: order.order_id,
+        prefill: { name: user.name || undefined, email: user.email || undefined, contact: user.phone || undefined }, theme: { color: '#e56b35' },
+        modal: { ondismiss: () => { setPaying(false); setPaymentMessage('Payment cancelled. No money was added.') } },
+        handler: async (response) => {
+          const verifyResponse = await fetch('/api/payments/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(response) })
+          const verification = await verifyResponse.json() as { verified?: boolean; message?: string; error?: string }
+          setPaying(false)
+          if (!verifyResponse.ok || !verification.verified) { setError(verification.error || 'Payment verification failed.'); return }
+          setPaymentMessage(verification.message || 'Payment verified. Your wallet will update after capture confirmation.')
+        },
+      })
+      checkout.on('payment.failed', (response) => { setPaying(false); setError(response.error?.description || 'Payment failed. Please try again.') })
+      checkout.open()
+    } catch (paymentError) { setPaying(false); setError(paymentError instanceof Error ? paymentError.message : 'Payment could not be started.') }
   }
 
-  const handleRechargeSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const rechargeAmount = Number(amount)
-    
-    if (isNaN(rechargeAmount) || rechargeAmount <= 0) {
-      setErrorMsg('Please enter a valid amount.')
-      return
-    }
-
-    setErrorMsg(null)
-    setSuccessMsg(null)
-    setAuthError(null)
-
-    // Launch correct authentication modal state
-    if (paymentMethod === 'upi') {
-      setAuthState('qr')
-    } else if (paymentMethod === 'card') {
-      setAuthState('otp')
-      setOtpVal('')
-    } else {
-      setAuthState('netbank')
-      setBankUsername('')
-      setBankPassword('')
-    }
-
-    setShowAuthModal(true)
-  }
-
-  const handleConfirmAuthentication = () => {
-    setSubmitting(true)
-    setAuthError(null)
-
-    // Simulate secure network transaction delay
-    setTimeout(() => {
-      // Basic mock credentials check
-      if (authState === 'otp' && otpVal.trim() !== '123456' && otpVal.trim() !== '') {
-        setAuthError('Incorrect OTP code. Enter 123456 or leave blank to auto-confirm.')
-        setSubmitting(false)
-        return
-      }
-
-      if (authState === 'netbank' && (!bankUsername.trim() || !bankPassword.trim())) {
-        setAuthError('Please fill out your Netbanking credentials.')
-        setSubmitting(false)
-        return
-      }
-
-      const methodLabel = paymentMethod === 'upi' ? 'UPI' : (paymentMethod === 'card' ? 'Card' : 'Netbanking')
-      const rechargeAmount = Number(amount)
-
-      const { balance: newBalance, transactions: newTxs } = updateMockWallet(
-        rechargeAmount, 
-        'credit', 
-        `Wallet top-up (${methodLabel} - Secure Authenticated)`
-      )
-
-      setBalance(newBalance)
-      setTransactions(newTxs)
-      setAuthState('success')
-      setSubmitting(false)
-
-      // Close modal on success completion
-      setTimeout(() => {
-        setShowAuthModal(false)
-        setSuccessMsg(`Successfully credited ₹${rechargeAmount} to your wallet!`)
-      }, 1500)
-
-    }, 1500)
-  }
-
-  if (loading || !user) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans">
-        <Loader2 className="animate-spin h-8 w-8 text-indigo-600" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
-      <Navigation />
-      
-      <div className="lg:pl-64 flex flex-col flex-1">
-        <main className="py-10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            
-            {/* Header */}
-            <div className="md:flex md:items-center md:justify-between border-b border-gray-200 pb-6 mb-8">
-              <div className="flex-1 min-w-0">
-                <h1 className="text-3xl font-bold leading-7 text-gray-900 sm:text-4xl sm:truncate">
-                  DailyNest Wallet
-                </h1>
-                <p className="mt-2 text-sm text-gray-500">
-                  Pre-fund your daily deliveries, check transactions, and set up quick recharges.
-                </p>
-              </div>
-            </div>
-
-            {/* Notification messages */}
-            {successMsg && (
-              <div className="mb-6 p-4 rounded-lg bg-green-50 border border-green-200 text-green-800 flex items-center gap-3">
-                <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
-                <span className="text-sm font-medium">{successMsg}</span>
-              </div>
-            )}
-
-            {errorMsg && (
-              <div className="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 flex items-center gap-3">
-                <span className="text-sm font-medium">{errorMsg}</span>
-              </div>
-            )}
-
-            {/* Grid layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              {/* Left 2 Cols: Wallet Recharge Card and Transactions */}
-              <div className="lg:col-span-2 space-y-6">
-                
-                {/* Balance Display Block */}
-                <div className="bg-indigo-900 rounded-3xl p-8 text-white relative overflow-hidden shadow-xl">
-                  <div className="relative z-10">
-                    <span className="text-sm text-indigo-200 font-medium">Available Balance</span>
-                    <h2 className="text-5xl font-extrabold mt-2 tracking-tight">₹{balance}</h2>
-                    
-                    <div className="flex items-center gap-4 mt-6 text-xs text-indigo-100">
-                      <span className="flex items-center gap-1 bg-indigo-800/60 px-3 py-1.5 rounded-full border border-indigo-700/50">
-                        <ShieldCheck className="h-4 w-4 text-green-400" /> Secure Payments
-                      </span>
-                      <span className="flex items-center gap-1 bg-indigo-800/60 px-3 py-1.5 rounded-full border border-indigo-700/50">
-                        <TrendingUp className="h-4 w-4 text-indigo-300" /> Instant Refund Skipped Days
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {/* Subtle decorative background blur shapes */}
-                  <div className="absolute right-0 bottom-0 top-0 opacity-10 flex items-center pr-8 pointer-events-none">
-                    <Wallet className="h-64 w-64 rotate-12 translate-x-12 translate-y-8" />
-                  </div>
-                </div>
-
-                {/* Recharge Card Form */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-md p-6">
-                  <h3 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-3 mb-6 flex items-center gap-2">
-                    <Plus className="h-5 w-5 text-indigo-500" /> Quick Add Money
-                  </h3>
-
-                  <form onSubmit={handleRechargeSubmit} className="space-y-6">
-                    {/* Quick amount suggestions */}
-                    <div className="space-y-2">
-                      <span className="block text-xs font-semibold text-gray-400 uppercase">Select Preset Amount</span>
-                      <div className="grid grid-cols-3 gap-3">
-                        {[200, 500, 1000].map(val => (
-                          <button
-                            key={val}
-                            type="button"
-                            onClick={() => handleQuickRecharge(val)}
-                            className={`py-3 rounded-lg border font-bold text-sm transition-all ${
-                              amount === String(val)
-                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                                : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                            }`}
-                          >
-                            +₹{val}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Custom Input */}
-                    <div className="space-y-2">
-                      <label htmlFor="custom-amount" className="block text-xs font-semibold text-gray-400 uppercase">
-                        Or Enter Custom Amount (₹)
-                      </label>
-                      <input
-                        type="number"
-                        id="custom-amount"
-                        required
-                        min="1"
-                        placeholder="Enter amount (e.g. 350)"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        className="block w-full rounded-lg border border-gray-300 py-3 px-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 font-semibold"
-                      />
-                    </div>
-
-                    {/* Payment methods */}
-                    <div className="space-y-2">
-                      <span className="block text-xs font-semibold text-gray-400 uppercase">Select Payment Method</span>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setPaymentMethod('upi')}
-                          className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-semibold transition-all ${
-                            paymentMethod === 'upi'
-                              ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-bold'
-                              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-55'
-                          }`}
-                        >
-                          <Smartphone className="h-4 w-4" /> UPI (GPay/PhonePe)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPaymentMethod('card')}
-                          className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-semibold transition-all ${
-                            paymentMethod === 'card'
-                              ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-bold'
-                              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-55'
-                          }`}
-                        >
-                          <CreditCard className="h-4 w-4" /> Credit / Debit Card
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPaymentMethod('netbanking')}
-                          className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-semibold transition-all ${
-                            paymentMethod === 'netbanking'
-                              ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-bold'
-                              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-55'
-                          }`}
-                        >
-                          <Smartphone className="h-4 w-4" /> Net Banking
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Submit Button */}
-                    <button
-                      type="submit"
-                      className="w-full flex items-center justify-center py-3.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow-md transition-colors"
-                    >
-                      Secure Recharge Wallet ₹{amount}
-                    </button>
-                  </form>
-                </div>
-
-              </div>
-
-              {/* Right 1 Col: Transactions Ledger */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-md p-6">
-                <h3 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-3 mb-6">
-                  Transactions Ledger
-                </h3>
-
-                {transactions.length === 0 ? (
-                  <div className="text-center py-12 text-gray-400 text-sm">
-                    <Wallet className="h-8 w-8 mx-auto mb-2 text-gray-300" />
-                    No recent transaction logs.
-                  </div>
-                ) : (
-                  <div className="flow-root max-h-[500px] overflow-y-auto pr-1">
-                    <ul className="-my-5 divide-y divide-gray-100">
-                      {transactions.map((tx) => (
-                        <li key={tx.id} className="py-4 flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-3 min-w-0">
-                            {tx.type === 'credit' ? (
-                              <div className="p-2 rounded-lg bg-green-50 text-green-600 flex-shrink-0">
-                                <ArrowDownLeft className="h-4 w-4" />
-                              </div>
-                            ) : (
-                              <div className="p-2 rounded-lg bg-gray-50 text-gray-600 flex-shrink-0">
-                                <ArrowUpRight className="h-4 w-4" />
-                              </div>
-                            )}
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-gray-900 truncate">{tx.description}</p>
-                              <p className="text-xs text-gray-500 mt-0.5">
-                                {new Date(tx.created_at).toLocaleDateString('en-IN', {
-                                  day: '2-digit',
-                                  month: 'short',
-                                  hour: '2-digit',
-                                  minute: '2-digit'
-                                })}
-                              </p>
-                            </div>
-                          </div>
-                          <div className={`text-sm font-bold flex-shrink-0 ${tx.type === 'credit' ? 'text-green-600' : 'text-gray-900'}`}>
-                            {tx.type === 'credit' ? '+' : '-'}₹{tx.amount}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Payment Authenticator Modal Overlay */}
-            {showAuthModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-950/40 backdrop-blur-sm">
-                <div className="bg-white rounded-3xl border border-gray-150 shadow-2xl w-full max-w-md overflow-hidden">
-                  
-                  {/* Gateway Header */}
-                  <div className="px-6 py-4 bg-indigo-700 text-white flex items-center justify-between border-b border-indigo-800">
-                    <div className="flex items-center gap-1.5">
-                      <Lock className="h-4 w-4 text-indigo-350" />
-                      <span className="text-xs font-bold uppercase tracking-wider">3D-Secure Authenticator</span>
-                    </div>
-                    <button 
-                      onClick={() => setShowAuthModal(false)} 
-                      disabled={submitting}
-                      className="text-indigo-200 hover:text-white text-xs font-semibold"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-
-                  {/* Warning banner */}
-                  {authError && (
-                    <div className="bg-red-50 p-3 border-b border-red-150 text-xs text-red-700 flex gap-2">
-                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                      <span>{authError}</span>
-                    </div>
-                  )}
-
-                  {/* Modal Body */}
-                  <div className="p-6">
-
-                    {/* QR Code view */}
-                    {authState === 'qr' && (
-                      <div className="text-center space-y-4">
-                        <h3 className="font-bold text-gray-900 text-base">Scan UPI QR Code to Pay</h3>
-                        <p className="text-xs text-gray-500">
-                          Scan using GPay, PhonePe, Paytm or any BHIM UPI app on your mobile to complete authentication.
-                        </p>
-                        
-                        <div className="mx-auto w-48 h-48 bg-gradient-to-tr from-indigo-50 to-green-50 border border-gray-200 rounded-2xl flex items-center justify-center relative p-3">
-                          <QrCode className="h-full w-full text-indigo-800" />
-                          <div className="absolute inset-0 bg-white/40 flex items-center justify-center backdrop-blur-[0.5px]">
-                            <span className="text-xs font-black text-indigo-900 bg-white/90 px-3 py-1 rounded-full border border-indigo-200 shadow-sm animate-pulse">
-                              ₹{amount}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="pt-4 border-t border-gray-100">
-                          <button
-                            type="button"
-                            onClick={handleConfirmAuthentication}
-                            disabled={submitting}
-                            className="w-full inline-flex items-center justify-center py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors gap-2"
-                          >
-                            {submitting ? (
-                              <>
-                                <Loader2 className="animate-spin h-4 w-4" /> Authenticating...
-                              </>
-                            ) : (
-                              <>Simulate QR Scan & Approve Payment</>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Card OTP view */}
-                    {authState === 'otp' && (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h3 className="font-bold text-gray-900 text-base">One-Time Password Verification</h3>
-                          <Building2 className="h-5 w-5 text-gray-400" />
-                        </div>
-                        <p className="text-xs text-gray-500 leading-relaxed">
-                          A 6-digit confirmation PIN has been sent by your bank to your registered mobile phone ending in *4321.
-                        </p>
-
-                        <div className="space-y-2">
-                          <input
-                            type="text"
-                            placeholder="Enter 6-digit code (e.g. 123456)"
-                            maxLength={6}
-                            value={otpVal}
-                            onChange={(e) => setOtpVal(e.target.value)}
-                            className="block w-full border border-gray-300 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 text-center font-bold text-lg tracking-[0.2em]"
-                          />
-                          <p className="text-[10px] text-gray-400 mt-1">
-                            * Enter <strong>123456</strong> or leave blank to successfully authenticate.
-                          </p>
-                        </div>
-
-                        <div className="pt-4 border-t border-gray-100">
-                          <button
-                            type="button"
-                            onClick={handleConfirmAuthentication}
-                            disabled={submitting}
-                            className="w-full inline-flex items-center justify-center py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors gap-2"
-                          >
-                            {submitting ? (
-                              <>
-                                <Loader2 className="animate-spin h-4 w-4" /> Verifying Code...
-                              </>
-                            ) : (
-                              <>Verify & Authorize Payment (₹{amount})</>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Netbanking Login view */}
-                    {authState === 'netbank' && (
-                      <div className="space-y-4">
-                        <h3 className="font-bold text-gray-900 text-base">Net Banking Gateway</h3>
-                        
-                        <div className="space-y-3">
-                          <div className="space-y-1">
-                            <label className="block text-xs font-semibold text-gray-500 uppercase">Select Bank</label>
-                            <select
-                              value={selectedBankName}
-                              onChange={(e) => setSelectedBankName(e.target.value)}
-                              className="block w-full rounded-xl border border-gray-300 py-2.5 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 text-sm font-medium"
-                            >
-                              <option>State Bank of India</option>
-                              <option>HDFC Bank</option>
-                              <option>ICICI Bank</option>
-                              <option>Axis Bank</option>
-                            </select>
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="block text-xs font-semibold text-gray-500 uppercase">Online User ID</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Enter Netbanking Customer ID"
-                              value={bankUsername}
-                              onChange={(e) => setBankUsername(e.target.value)}
-                              className="block w-full border border-gray-300 rounded-xl py-2.5 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 text-sm"
-                            />
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="block text-xs font-semibold text-gray-500 uppercase">Password</label>
-                            <input
-                              type="password"
-                              required
-                              placeholder="Enter Secure Password"
-                              value={bankPassword}
-                              onChange={(e) => setBankPassword(e.target.value)}
-                              className="block w-full border border-gray-300 rounded-xl py-2.5 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 text-sm"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="pt-4 border-t border-gray-100">
-                          <button
-                            type="button"
-                            onClick={handleConfirmAuthentication}
-                            disabled={submitting}
-                            className="w-full inline-flex items-center justify-center py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors gap-2"
-                          >
-                            {submitting ? (
-                              <>
-                                <Loader2 className="animate-spin h-4 w-4" /> Connecting to Bank...
-                              </>
-                            ) : (
-                              <>Authorize Login & Pay (₹{amount})</>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Success notification view */}
-                    {authState === 'success' && (
-                      <div className="text-center py-6 space-y-4">
-                        <div className="h-16 w-16 bg-green-50 border-2 border-green-400 rounded-full flex items-center justify-center text-green-500 mx-auto animate-bounce">
-                          <Check className="h-8 w-8 stroke-[3]" />
-                        </div>
-                        <div>
-                          <h3 className="font-extrabold text-gray-900 text-lg">Transaction Authenticated!</h3>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Your payment has been successfully verified. Credits are added to your wallet.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
-
-                  {/* PCI DSS footer */}
-                  <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 text-center flex items-center justify-center gap-1 text-[10px] text-gray-400">
-                    <ShieldCheck className="h-4 w-4 text-green-500" />
-                    Secure PCI-DSS Compliant 256-bit encryption.
-                  </div>
-
-                </div>
-              </div>
-            )}
-
-          </div>
-        </main>
-      </div>
-    </div>
-  )
+  return <div className="app-surface"><Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" /><Navigation /><div className="lg:pl-64"><main className="mx-auto max-w-6xl px-5 py-10 sm:px-8">
+    <header className="border-b border-[#dfd0bd] pb-7"><p className="eyebrow text-[#bb4824]">Payments & credit</p><h1 className="editorial-title mt-3 text-5xl font-black">DailyNest Wallet</h1><p className="mt-4 max-w-2xl leading-7 text-[#6f625f]">Your server-backed balance, reserved refunds, and auditable transaction history.</p></header>
+    {error && <div role="alert" className="mt-6 border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
+    {paymentMessage && <div role="status" className="mt-6 border border-green-200 bg-green-50 p-4 text-sm text-green-800">{paymentMessage}</div>}
+    <section className="mt-8 grid gap-6 lg:grid-cols-2">
+      <article className="surface-card p-7"><WalletCards className="text-[#397354]" /><p className="eyebrow mt-6 text-[#397354]">Available balance</p><h2 className="mt-2 text-5xl font-black tabular-nums">{busy ? '—' : money(available)}</h2><div className="mt-5 grid grid-cols-2 gap-3 border-t border-[#eadfce] pt-5 text-sm"><div><p className="text-[#6f625f]">Total</p><strong>{money(wallet?.balance_paise ?? 0)}</strong></div><div><p className="text-[#6f625f]">Refund holds</p><strong>{money(wallet?.held_paise ?? 0)}</strong></div></div><label className="mt-6 block text-sm font-bold">Top-up amount (₹)<input inputMode="decimal" value={topupRupees} onChange={event => setTopupRupees(event.target.value.replace(/[^0-9.]/g, ''))} className="mt-2 w-full rounded-lg border border-[#cdbca6] bg-white px-4 py-3" /></label><button type="button" onClick={startTopup} disabled={paying} className="button button-dark mt-3 w-full disabled:opacity-50">{paying ? <Loader2 className="animate-spin" /> : <CreditCard />} {paying ? 'Opening secure checkout…' : 'Add money securely'}</button><p className="mt-3 text-xs leading-5 text-[#6f625f]">Test mode · Razorpay handles UPI/card details. DailyNest never receives your card number or UPI PIN.</p></article>
+      <article className="surface-card p-7"><CreditCard className="text-[#e56b35]" /><h2 className="mt-5 text-2xl font-black">Direct payment stays separate</h2><p className="mt-3 text-sm leading-6 text-[#6f625f]">UPI or card checkout will pay an order directly. Wallet top-up remains an optional separate action after server-side gateway verification is connected.</p><p className="mt-5 text-xs font-black uppercase tracking-wider text-[#bb4824]">No gateway payment enabled</p></article>
+    </section>
+    <section className="mt-10"><div className="flex items-end justify-between"><div><p className="eyebrow text-[#397354]">Audit trail</p><h2 className="mt-2 text-2xl font-black">Transactions</h2></div><ShieldCheck className="text-[#397354]" /></div>{busy ? <Loader2 className="mt-6 animate-spin" /> : transactions.length === 0 ? <div className="surface-card mt-5 p-8 text-center"><p className="font-black">No transactions yet</p><p className="mt-2 text-sm text-[#6f625f]">Verified top-ups, delivery deductions, refunds, and adjustments will appear here.</p></div> : <div className="mt-5 overflow-hidden border border-[#dfd0bd] bg-[#fffdf8]">{transactions.map(item => <article key={item.id} className="flex items-center gap-4 border-b border-[#eadfce] p-4 last:border-0">{item.direction === 'credit' ? <ArrowDownLeft className="text-[#397354]" /> : <ArrowUpRight className="text-[#bb4824]" />}<div className="min-w-0 flex-1"><p className="font-black">{item.description}</p><p className="text-xs text-[#6f625f]">{new Date(item.created_at).toLocaleString('en-IN')} · Balance {money(item.balance_after_paise)}</p></div><strong>{item.direction === 'credit' ? '+' : '−'}{money(item.amount_paise)}</strong></article>)}</div>}</section>
+    <section className="mt-10"><p className="eyebrow text-[#bb4824]">Refunds</p><h2 className="mt-2 text-2xl font-black">Requests & review</h2>{refunds.length === 0 ? <p className="mt-3 max-w-3xl text-sm leading-6 text-[#6f625f]">No refund requests. When unused funds are available, a request can reserve that amount for automatic processing or admin review.</p> : <div className="mt-5 grid gap-3">{refunds.map(refund => <article key={refund.id} className="surface-card flex items-center justify-between gap-4 p-5"><div><strong>{money(refund.amount_paise)}</strong><p className="text-sm text-[#6f625f]">{refund.reason}</p></div><span className="rounded-full bg-[#f1e4cf] px-3 py-1 text-xs font-black uppercase">{refund.status}</span></article>)}</div>}</section>
+  </main></div></div>
 }

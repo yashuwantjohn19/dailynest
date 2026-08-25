@@ -4,6 +4,7 @@ export const getProductionForecast = async () => {
   // TODO: Implement
 }
 
-export const updateProduction = async (data: any) => {
+export const updateProduction = async (data: unknown) => {
+  void data
   // TODO: Implement
 }

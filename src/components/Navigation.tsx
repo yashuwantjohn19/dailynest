@@ -1,5 +1,7 @@
+'use client'
 import Link from 'next/link'
-import { useState } from 'react'
+import { usePathname } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import {
   Home,
   Calendar,
@@ -11,7 +13,8 @@ import {
   LogOut,
   MapPin,
   Users,
-  TrendingUp
+  TrendingUp,
+  UserRound
 } from 'lucide-react'
 import { useUser } from '../hooks/useUser'
 
@@ -20,6 +23,7 @@ const navigation = [
   { name: 'Subscription', href: '/subscription', icon: ChefHat },
   { name: 'Calendar', href: '/calendar', icon: Calendar },
   { name: 'Wallet', href: '/wallet', icon: Wallet },
+  { name: 'Account', href: '/account', icon: UserRound },
 ]
 
 const adminNavigation = [
@@ -32,22 +36,63 @@ const adminNavigation = [
 
 export default function Navigation() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const openerRef = useRef<HTMLButtonElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const desktopShellRef = useRef<HTMLDivElement>(null)
+  const mobileHeaderRef = useRef<HTMLDivElement>(null)
+  const pathname = usePathname()
   const { user, logout } = useUser()
 
-  // Enabled for development previews
-  const isAdmin = true
+  const isAdmin = user?.role === 'admin'
+  const visibleNavigation = user ? navigation : [{ name: 'Home', href: '/', icon: Home }]
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const background = document.querySelector('main')
+    const opener = openerRef.current
+    const backgroundRegions = [background, desktopShellRef.current, mobileHeaderRef.current].filter(Boolean) as Element[]
+    backgroundRegions.forEach((region) => {
+      region.setAttribute('inert', '')
+      region.setAttribute('aria-hidden', 'true')
+    })
+    closeRef.current?.focus()
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSidebarOpen(false)
+        return
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const controls = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('a[href],button:not([disabled])'))
+      const first = controls[0]
+      const last = controls.at(-1)
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      backgroundRegions.forEach((region) => {
+        region.removeAttribute('inert')
+        region.removeAttribute('aria-hidden')
+      })
+      document.removeEventListener('keydown', handleKeyDown)
+      opener?.focus()
+    }
+  }, [sidebarOpen])
 
   return (
     <>
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
-          <div className="fixed inset-y-0 left-0 flex w-full max-w-xs flex-col bg-white">
-            <div className="flex h-16 flex-shrink-0 items-center justify-between px-4 bg-indigo-600 text-white">
-              <h1 className="text-xl font-bold">DailyNest</h1>
+          <div className="fixed inset-0 bg-[#321c31]/70" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="mobile-nav-title" className="fixed inset-y-0 left-0 flex w-full max-w-xs flex-col bg-[#fffdf8]">
+            <div className="flex h-20 flex-shrink-0 items-center justify-between px-5 bg-[#321c31] text-white">
+              <h1 id="mobile-nav-title" className="text-xl font-black tracking-[-.04em]">Daily<span className="text-[#f18a55]">Nest</span></h1>
               <button
+                ref={closeRef}
                 type="button"
+                aria-label="Close navigation"
                 className="text-white hover:text-gray-200"
                 onClick={() => setSidebarOpen(false)}
               >
@@ -57,11 +102,11 @@ export default function Navigation() {
             
             <div className="flex-grow flex flex-col justify-between overflow-y-auto">
               <nav className="flex-1 space-y-1 px-2 py-4">
-                {navigation.map((item) => (
+                {visibleNavigation.map((item) => (
                   <Link
                     key={item.name}
                     href={item.href}
-                    className="group flex items-center px-2 py-2 text-sm font-medium text-gray-600 rounded-md hover:bg-gray-50 hover:text-gray-900"
+                    className={`group flex items-center rounded-xl px-3 py-3 text-sm font-semibold ${pathname === item.href ? 'bg-[#f1e4cf] text-[#321c31]' : 'text-[#6f625f] hover:bg-[#f8eee0]'}`}
                     onClick={() => setSidebarOpen(false)}
                   >
                     <item.icon className="mr-3 h-5 w-5 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
@@ -72,20 +117,21 @@ export default function Navigation() {
                   <Link
                     key={item.name}
                     href={item.href}
-                    className="group flex items-center px-2 py-2 text-sm font-medium text-gray-600 rounded-md hover:bg-gray-50 hover:text-gray-900"
+                    className={`group flex items-center rounded-xl px-3 py-3 text-sm font-semibold ${pathname === item.href ? 'bg-[#f1e4cf] text-[#321c31]' : 'text-[#6f625f] hover:bg-[#f8eee0]'}`}
                     onClick={() => setSidebarOpen(false)}
                   >
                     <item.icon className="mr-3 h-5 w-5 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
                     {item.name}
                   </Link>
                 ))}
+                {!user && <Link href="/login" onClick={() => setSidebarOpen(false)} className="mt-3 flex items-center justify-center rounded-xl bg-[#e56b35] px-3 py-3 text-sm font-bold text-white">Log in</Link>}
               </nav>
 
               {user && (
                 <div className="flex-shrink-0 flex border-t border-gray-150 p-4 bg-gray-50">
                   <div className="flex items-center w-full justify-between">
                     <div className="flex items-center min-w-0">
-                      <div className="h-9 w-9 rounded-full bg-indigo-150 text-indigo-700 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-indigo-200">
+                      <div className="h-9 w-9 rounded-full bg-[#f1e4cf] text-[#321c31] flex items-center justify-center font-bold text-sm flex-shrink-0 border border-[#d7c5ad]">
                         {user.name ? user.name.slice(0, 2).toUpperCase() : 'DN'}
                       </div>
                       <div className="ml-3 min-w-0">
@@ -112,19 +158,19 @@ export default function Navigation() {
       )}
  
       {/* Desktop sidebar */}
-      <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
-        <div className="flex flex-col flex-grow bg-white border-r border-gray-250">
-          <div className="flex h-16 flex-shrink-0 items-center px-4 bg-indigo-600 text-white">
-            <h1 className="text-xl font-bold">DailyNest</h1>
+      <div ref={desktopShellRef} className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
+        <div className="flex flex-col flex-grow bg-[#fffdf8] border-r border-[#dfd0bd]">
+          <div className="flex h-20 flex-shrink-0 items-center px-6 bg-[#321c31] text-white">
+            <h1 className="text-xl font-black tracking-[-.04em]">Daily<span className="text-[#f18a55]">Nest</span></h1>
           </div>
           
           <div className="flex-grow flex flex-col justify-between overflow-y-auto">
             <nav className="flex-1 space-y-1 px-2 py-4">
-              {navigation.map((item) => (
+              {visibleNavigation.map((item) => (
                 <Link
                   key={item.name}
                   href={item.href}
-                  className="group flex items-center px-2 py-2 text-sm font-medium text-gray-600 rounded-md hover:bg-gray-50 hover:text-gray-900"
+                  className={`group flex items-center rounded-xl px-3 py-3 text-sm font-semibold ${pathname === item.href ? 'bg-[#f1e4cf] text-[#321c31]' : 'text-[#6f625f] hover:bg-[#f8eee0]'}`}
                 >
                   <item.icon className="mr-3 h-5 w-5 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
                   {item.name}
@@ -134,19 +180,20 @@ export default function Navigation() {
                 <Link
                   key={item.name}
                   href={item.href}
-                  className="group flex items-center px-2 py-2 text-sm font-medium text-gray-600 rounded-md hover:bg-gray-50 hover:text-gray-900"
+                  className={`group flex items-center rounded-xl px-3 py-3 text-sm font-semibold ${pathname === item.href ? 'bg-[#f1e4cf] text-[#321c31]' : 'text-[#6f625f] hover:bg-[#f8eee0]'}`}
                 >
                   <item.icon className="mr-3 h-5 w-5 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
                   {item.name}
                 </Link>
               ))}
+              {!user && <Link href="/login" className="mt-3 flex items-center justify-center rounded-xl bg-[#e56b35] px-3 py-3 text-sm font-bold text-white">Log in</Link>}
             </nav>
 
             {user && (
               <div className="flex-shrink-0 flex border-t border-gray-150 p-4 bg-gray-50">
                 <div className="flex items-center w-full justify-between">
                   <div className="flex items-center min-w-0">
-                    <div className="h-9 w-9 rounded-full bg-indigo-150 text-indigo-700 flex items-center justify-center font-bold text-sm flex-shrink-0 border border-indigo-200">
+                    <div className="h-9 w-9 rounded-full bg-[#f1e4cf] text-[#321c31] flex items-center justify-center font-bold text-sm flex-shrink-0 border border-[#d7c5ad]">
                       {user.name ? user.name.slice(0, 2).toUpperCase() : 'DN'}
                     </div>
                     <div className="ml-3 min-w-0">
@@ -169,15 +216,17 @@ export default function Navigation() {
       </div>
  
       {/* Mobile header */}
-      <div className="sticky top-0 z-10 flex h-16 flex-shrink-0 items-center justify-between bg-white border-b border-gray-200 px-4 lg:hidden">
+      <div ref={mobileHeaderRef} className="sticky top-0 z-30 flex h-16 flex-shrink-0 items-center justify-between bg-[#321c31] border-b border-[#57304f] px-4 text-white lg:hidden">
         <button
+          ref={openerRef}
           type="button"
-          className="text-gray-500 hover:text-gray-600"
+          aria-label="Open navigation"
+          className="text-white/80 hover:text-white"
           onClick={() => setSidebarOpen(true)}
         >
           <Menu className="h-6 w-6" />
         </button>
-        <h1 className="text-lg font-semibold text-gray-900">DailyNest</h1>
+        <h1 className="text-lg font-black tracking-[-.04em]">Daily<span className="text-[#f18a55]">Nest</span></h1>
         <div className="w-6" /> {/* Spacer for centering */}
       </div>
     </>

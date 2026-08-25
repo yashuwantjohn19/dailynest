@@ -1,57 +1,14 @@
-import { Apartment, Subscription, Delivery, WalletTransaction } from '../types/database'
+import { Apartment, Subscription, Delivery } from '../types/database'
 
 export const DEFAULT_APARTMENTS: Apartment[] = [
-  { id: 'apt-1', name: 'Olympia Opaline, Navalur', address: 'OMR Road, Navalur', city: 'Chennai', state: 'Tamil Nadu', zip_code: '600130', created_at: '', updated_at: '' },
-  { id: 'apt-2', name: 'Hiranandani Birchwood, Egattur', address: 'OMR Road, Egattur', city: 'Chennai', state: 'Tamil Nadu', zip_code: '600130', created_at: '', updated_at: '' },
-  { id: 'apt-3', name: 'DLF Gardencity, Semmancheri', address: 'Semmancheri', city: 'Chennai', state: 'Tamil Nadu', zip_code: '600119', created_at: '', updated_at: '' },
-  { id: 'apt-4', name: 'Appaswamy Splendour, Sholinganallur', address: 'Sholinganallur', city: 'Chennai', state: 'Tamil Nadu', zip_code: '600119', created_at: '', updated_at: '' },
+  { id: 'apt-1', name: 'Garden Court', address: 'Central Road', city: 'Local delivery area', state: 'Tamil Nadu', zip_code: '600130', created_at: '', updated_at: '' },
+  { id: 'apt-2', name: 'Birchwood Homes', address: 'Lake Road', city: 'Local delivery area', state: 'Tamil Nadu', zip_code: '600130', created_at: '', updated_at: '' },
+  { id: 'apt-3', name: 'Greenview Apartments', address: 'Garden Street', city: 'Local delivery area', state: 'Tamil Nadu', zip_code: '600119', created_at: '', updated_at: '' },
+  { id: 'apt-4', name: 'Neighbourhood Heights', address: 'Main Road', city: 'Local delivery area', state: 'Tamil Nadu', zip_code: '600119', created_at: '', updated_at: '' },
 ]
 
 export const getMockApartments = (): Apartment[] => {
   return DEFAULT_APARTMENTS
-}
-
-export const getMockWallet = () => {
-  if (typeof window === 'undefined') return { balance: 0, transactions: [] }
-  const balance = localStorage.getItem('dailynest_mock_wallet_balance')
-  const transactionsRaw = localStorage.getItem('dailynest_mock_wallet_transactions')
-  
-  if (!balance) {
-    localStorage.setItem('dailynest_mock_wallet_balance', '1250')
-    const initialTx: WalletTransaction[] = [
-      { id: 'tx-1', user_id: 'user-123', amount: 1500, type: 'credit', description: 'Wallet top-up (UPI)', created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), updated_at: '' },
-      { id: 'tx-2', user_id: 'user-123', amount: 120, type: 'debit', description: 'Chapati Delivery', reference_id: 'del-1', created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), updated_at: '' },
-      { id: 'tx-3', user_id: 'user-123', amount: 130, type: 'debit', description: 'Chapati Delivery', reference_id: 'del-2', created_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), updated_at: '' },
-    ]
-    localStorage.setItem('dailynest_mock_wallet_transactions', JSON.stringify(initialTx))
-    return { balance: 1250, transactions: initialTx }
-  }
-  
-  return {
-    balance: Number(balance),
-    transactions: JSON.parse(transactionsRaw || '[]') as WalletTransaction[]
-  }
-}
-
-export const updateMockWallet = (amount: number, type: 'credit' | 'debit', description: string) => {
-  const { balance, transactions } = getMockWallet()
-  const newBalance = type === 'credit' ? balance + amount : balance - amount
-  
-  const newTx: WalletTransaction = {
-    id: `tx-${Date.now()}`,
-    user_id: 'user-123',
-    amount,
-    type,
-    description,
-    created_at: new Date().toISOString(),
-    updated_at: ''
-  }
-  
-  localStorage.setItem('dailynest_mock_wallet_balance', String(newBalance))
-  localStorage.setItem('dailynest_mock_wallet_transactions', JSON.stringify([newTx, ...transactions]))
-  
-  window.dispatchEvent(new Event('dailynest_wallet_update'))
-  return { balance: newBalance, transactions: [newTx, ...transactions] }
 }
 
 export interface MockSubscription extends Subscription {
@@ -60,29 +17,26 @@ export interface MockSubscription extends Subscription {
   paused: boolean
 }
 
+const isBundleQuantity = (quantity: number) => {
+  if (!Number.isInteger(quantity) || quantity <= 0) return false
+  for (let family = 0; family * 32 <= quantity; family += 1) {
+    for (let standard = 0; family * 32 + standard * 20 <= quantity; standard += 1) {
+      if ((quantity - family * 32 - standard * 20) % 10 === 0) return true
+    }
+  }
+  return false
+}
+
 export const getMockSubscription = (): MockSubscription | null => {
   if (typeof window === 'undefined') return null
   const sub = localStorage.getItem('dailynest_mock_subscription')
-  if (!sub) {
-    // Return a default subscription
-    const defaultSub: MockSubscription = {
-      id: 'sub-123',
-      user_id: 'user-123',
-      apartment_id: 'apt-1',
-      plan: 'premium',
-      meals_per_week: 5,
-      quantity: 4,
-      start_date: new Date().toISOString().split('T')[0],
-      status: 'active',
-      days_selected: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-      paused: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-    localStorage.setItem('dailynest_mock_subscription', JSON.stringify(defaultSub))
-    return defaultSub
+  if (!sub) return null
+  const parsed = JSON.parse(sub) as MockSubscription
+  if (!isBundleQuantity(parsed.quantity)) {
+    localStorage.removeItem('dailynest_mock_subscription')
+    return null
   }
-  return JSON.parse(sub)
+  return parsed
 }
 
 export const saveMockSubscription = (sub: MockSubscription | null) => {
