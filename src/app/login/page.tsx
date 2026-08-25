@@ -2,11 +2,15 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, CheckCircle2, Loader2, Mail, ShieldCheck } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ArrowLeft, CheckCircle2, KeyRound, Loader2, Mail, ShieldCheck } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from '../../lib/supabase'
 
 export default function LoginPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
+  const [otp, setOtp] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [infoMessage, setInfoMessage] = useState<string | null>(null)
@@ -32,7 +36,6 @@ export default function LoginPage() {
       email: normalizedEmail,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(new URLSearchParams(window.location.search).get('next') || '/dashboard')}`,
       },
     })
     setLoading(false)
@@ -43,7 +46,38 @@ export default function LoginPage() {
     }
 
     setEmail(normalizedEmail)
-    setInfoMessage('Sign-in link sent. Check your inbox and spam folder, then click the link to continue.')
+    setOtpSent(true)
+    setInfoMessage('A 6-digit verification code was sent to your email. Check your inbox and spam folder.')
+  }
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setInfoMessage(null)
+
+    const token = otp.replace(/\D/g, '')
+    if (token.length !== 6) {
+      setError('Enter the 6-digit code from your email.')
+      return
+    }
+
+    setLoading(true)
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email',
+    })
+    setLoading(false)
+
+    if (verifyError) {
+      setError(verifyError.message)
+      return
+    }
+
+    const requestedNext = new URLSearchParams(window.location.search).get('next')
+    const next = requestedNext?.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/dashboard'
+    router.replace(next)
+    router.refresh()
   }
 
   return (
@@ -67,7 +101,7 @@ export default function LoginPage() {
           <div className="mt-10">
             <p className="eyebrow text-[#397354]">Fresh local deliveries</p>
             <h2 className="editorial-title mt-3 text-4xl font-black text-[#321c31]">Welcome home.</h2>
-            <p className="mt-3 text-sm leading-6 text-[#6f625f]">Enter your email and we will send you a secure sign-in link.</p>
+            <p className="mt-3 text-sm leading-6 text-[#6f625f]">{otpSent ? `Enter the verification code sent to ${email}.` : 'Enter your email and we will send you a secure 6-digit code.'}</p>
           </div>
         </div>
 
@@ -79,17 +113,29 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form className="mt-8 space-y-6" onSubmit={handleSendOtp}>
+        <form className="mt-8 space-y-6" onSubmit={otpSent ? handleVerifyOtp : handleSendOtp}>
+          {!otpSent ? (
             <div className="space-y-2">
               <label htmlFor="email-address" className="block text-sm font-bold text-[#321c31]">Email address</label>
               <div className="relative rounded-md shadow-sm">
                 <Mail className="absolute left-4 top-4 h-5 w-5 text-[#9b8177]" />
                 <input id="email-address" type="email" autoComplete="email" required aria-invalid={Boolean(error)} aria-describedby={error ? 'email-help auth-error' : 'email-help'} aria-errormessage={error ? 'auth-error' : undefined} placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="block w-full rounded-xl border border-[#cdbca6] bg-white py-3.5 pl-12 pr-4 text-[#321c31]" />
               </div>
-              <p id="email-help" className="text-xs text-gray-500">No password is needed. The link expires after a short time.</p>
+              <p id="email-help" className="text-xs text-gray-500">No password is needed. The verification code expires after a short time.</p>
             </div>
+          ) : (
+            <div className="space-y-2">
+              <label htmlFor="email-otp" className="block text-sm font-bold text-[#321c31]">Verification code</label>
+              <div className="relative rounded-md shadow-sm">
+                <KeyRound className="absolute left-4 top-4 h-5 w-5 text-[#9b8177]" />
+                <input id="email-otp" type="text" inputMode="numeric" autoComplete="one-time-code" required maxLength={6} aria-invalid={Boolean(error)} aria-describedby={error ? 'otp-help auth-error' : 'otp-help'} placeholder="000000" value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} className="block w-full rounded-xl border border-[#cdbca6] bg-white py-3.5 pl-12 pr-4 text-center text-xl font-bold tracking-[.35em] text-[#321c31]" />
+              </div>
+              <p id="otp-help" className="text-xs text-gray-500">Use the newest code sent to your email.</p>
+              <button type="button" onClick={() => { setOtpSent(false); setOtp(''); setError(null); setInfoMessage(null) }} className="text-sm font-bold text-[#bb4824] hover:text-[#321c31]">Use a different email</button>
+            </div>
+          )}
             <button type="submit" disabled={loading} className="flex w-full justify-center rounded-xl bg-[#e56b35] px-4 py-3.5 font-bold text-white hover:bg-[#bb4824] disabled:opacity-50">
-              {loading ? <Loader2 aria-label="Sending sign-in link" className="animate-spin h-5 w-5" /> : 'Email me a sign-in link'}
+              {loading ? <Loader2 aria-label={otpSent ? 'Verifying code' : 'Sending verification code'} className="animate-spin h-5 w-5" /> : otpSent ? 'Verify and sign in' : 'Email me a verification code'}
             </button>
         </form>
 
