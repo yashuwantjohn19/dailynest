@@ -34,6 +34,7 @@ export default function AccountPage() {
   const { user, loading: userLoading, refresh } = useUser()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [address, setAddress] = useState<AddressForm>(emptyAddress)
   const [saving, setSaving] = useState(false)
   const [locating, setLocating] = useState(false)
@@ -50,6 +51,7 @@ export default function AccountPage() {
     if (!user) return
     setName(user.name || '')
     setEmail(user.email || '')
+    setPhone(user.phone || '')
 
     setLoadingAddress(true)
     supabase.from('addresses').select('*').eq('user_id', user.id).eq('is_default', true).maybeSingle().then(({ data, error: loadError }: { data: AddressForm | null, error: { message: string } | null }) => {
@@ -81,31 +83,8 @@ export default function AccountPage() {
   }, [user])
 
   useEffect(() => {
-    const postalCode = address.postal_code.trim().toUpperCase()
-    const countryCode = address.country_code.trim().toUpperCase()
-    if (!user || !postalCode) {
-      setDeliveryEligibility(null)
-      return
-    }
-
-    if (countryCode !== 'IN' || !/^600\d{3}$/.test(postalCode)) {
-      setDeliveryEligibility('unavailable')
-      return
-    }
-
-    setDeliveryEligibility('checking')
-    const timer = window.setTimeout(async () => {
-      const { data, error: lookupError } = await supabase
-        .from('service_postal_codes')
-        .select('postal_code')
-        .eq('postal_code', postalCode)
-        .eq('is_active', true)
-        .maybeSingle()
-      setDeliveryEligibility(!lookupError && data ? 'available' : 'unavailable')
-    }, 250)
-
-    return () => window.clearTimeout(timer)
-  }, [address.postal_code, address.country_code, user])
+    setDeliveryEligibility(user && address.postal_code.trim() ? 'available' : null)
+  }, [address.postal_code, user])
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault()
@@ -115,6 +94,7 @@ export default function AccountPage() {
     const { error: profileError } = await supabase.rpc('save_own_profile', {
       p_name: name.trim(),
       p_email: email.trim(),
+      p_phone: phone.trim() || null,
     })
 
     if (profileError) {
@@ -163,8 +143,7 @@ export default function AccountPage() {
     }
 
     setLocating(true)
-    navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
+    const locationSuccess = async ({ coords }: GeolocationPosition) => {
         const latitude = Number(coords.latitude.toFixed(6))
         const longitude = Number(coords.longitude.toFixed(6))
         setAddress((current) => ({
@@ -195,15 +174,22 @@ export default function AccountPage() {
         } finally {
           setLocating(false)
         }
-      },
-      (locationError) => {
+      }
+    const locationFailure = (locationError: GeolocationPositionError, allowRetry = true) => {
+      if (allowRetry && locationError.code !== locationError.PERMISSION_DENIED) {
+        navigator.geolocation.getCurrentPosition(locationSuccess, (retryError) => locationFailure(retryError, false), {
+          enableHighAccuracy: false,
+          timeout: 20000,
+          maximumAge: 300000,
+        })
+        return
+      }
         setLocating(false)
         setError(locationError.code === locationError.PERMISSION_DENIED
           ? 'Location permission was not allowed. Enter the address manually or enable location access and try again.'
-          : 'We could not get your current location. Check your connection and try again.')
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    )
+          : 'Your device could not provide a location. Check that location services are enabled, or enter the address manually.')
+      }
+    navigator.geolocation.getCurrentPosition(locationSuccess, locationFailure, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 })
   }
 
   const clearPin = () => setAddress((current) => ({ ...current, latitude: null, longitude: null, location_accuracy_m: null, location_captured_at: null }))
@@ -237,7 +223,7 @@ export default function AccountPage() {
               <div className="grid sm:grid-cols-2 gap-4">
                 <label className="text-sm font-medium">Name<input required autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} /></label>
                 <label className="text-sm font-medium">Email<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} /></label>
-                <label className="text-sm font-medium sm:col-span-2">Phone<input disabled value={user.phone} className="mt-1 block w-full border border-gray-200 bg-gray-50 rounded-lg px-3 py-2 text-gray-500" /></label>
+                <label className="text-sm font-medium sm:col-span-2">Phone<input type="tel" autoComplete="tel" inputMode="tel" maxLength={20} value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^0-9+ ()-]/g, ''))} placeholder="+91 98765 43210" className={inputClass} /></label>
               </div>
             </section>
 
@@ -282,7 +268,7 @@ export default function AccountPage() {
                 <label className="text-sm font-medium">Country code<input required autoComplete="country" maxLength={2} value={address.country_code} onChange={(e) => setAddress({ ...address, country_code: e.target.value.replace(/[^a-z]/gi, '').slice(0, 2).toUpperCase() })} placeholder="IN" className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 uppercase" /></label>
                 <label className="text-sm font-medium sm:col-span-2">Postal / ZIP code<input required autoComplete="postal-code" maxLength={16} value={address.postal_code} onChange={(e) => setAddress({ ...address, postal_code: e.target.value.replace(/[^a-z0-9 -]/gi, '').slice(0, 16).toUpperCase() })} className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 uppercase" /></label>
               </div>}
-              {deliveryEligibility && <div role="status" className={`mt-4 rounded-lg border p-3 text-sm ${deliveryEligibility === 'available' ? 'border-green-200 bg-green-50 text-green-800' : deliveryEligibility === 'checking' ? 'border-[#dfd0bd] bg-[#fff8ea] text-[#6f625f]' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{deliveryEligibility === 'available' ? 'Delivery is available for this Chennai PIN code.' : deliveryEligibility === 'checking' ? 'Checking current delivery availability…' : 'You can save this worldwide address and location pin. Delivery is not yet available for this postal code.'}</div>}
+              {deliveryEligibility && <div role="status" className="mt-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">Delivery is available for this location.</div>}
               <p className="mt-3 text-xs text-gray-500">Your preferred time is a request. DailyNest can assign the final delivery time based on route and area.</p>
               </div>
             </section>
