@@ -14,6 +14,20 @@ export async function createRazorpayOrder(input: { amount: number; receipt: stri
   return { id: order.id }
 }
 
+export async function createRazorpayRefund(input: { paymentId: string; amount: number; requestId: string }) {
+  const keyId = process.env.RAZORPAY_KEY_ID
+  const secret = process.env.RAZORPAY_KEY_SECRET
+  if (!keyId || !secret) throw new Error('Razorpay is not configured')
+  const razorpay = new Razorpay({ key_id: keyId, key_secret: secret })
+  const refund = await razorpay.payments.refund(input.paymentId, {
+    amount: input.amount,
+    speed: 'normal',
+    notes: { refund_request_id: input.requestId },
+  })
+  if (!refund.id) throw new Error('Razorpay refund creation failed')
+  return { id: refund.id, status: refund.status }
+}
+
 function safeMatch(expected: string, received: string) {
   const a = Buffer.from(expected, 'utf8'), b = Buffer.from(received, 'utf8')
   return a.length === b.length && timingSafeEqual(a, b)
